@@ -1,0 +1,5 @@
+{
+  "source": "locate_engraved.py",
+  "sha256": "decaa01a90c400ccd071343d00c0e260945cf3933f795ede785ed4ad23f51ef5",
+  "stages": "A-E geometry plus F sampling/threshold/finder helpers; no decoder or RS"
+}

@@ -1,0 +1,40 @@
+# Local data, capture sessions and historical research
+/local_archive/
+/inputs/
+/outputs/
+/handoffs/
+/review_*/
+
+# Installed tools and Python environments
+/tools/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Android build output and machine-specific configuration
+**/build/
+**/.gradle/
+android_capture/.local/
+**/local.properties
+*.apk
+*.aab
+*.dex
+*.jks
+*.keystore
+
+# Local credentials and editor/system files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.vscode/
+.idea/
+.aws/
+.codex/
+.agents/
+*.log
+.DS_Store
+Thumbs.db
