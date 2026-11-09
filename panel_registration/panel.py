@@ -114,10 +114,15 @@ def calibrate(panel, capture, anchors, roi_width_mm=15, roi_height_mm=9):
         rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
         corners = np.array([[-rw/2, -rh/2], [rw/2, -rh/2], [rw/2, rh/2], [-rw/2, rh/2]]) @ rotation.T + [x, y]
         quad = transform(matrix, corners)
+        body_corners=np.array([[-5.5,-3.],[5.5,-3.],[5.5,3.],[-5.5,3.]]) @ rotation.T + [x,y]
+        body_quad=(transform(matrix,body_corners)/[w,h]).tolist()
         parts.append(dict(designator=part['designator'], center_px=center.tolist(),
+                          body_quad_normalized=body_quad,
+                          body_nominal_quad_normalized=body_quad,
+                          body_fit=dict(detected=False,method='placement_11x6_mm',nominal_dimensions_mm=[11,6]),
                           center_normalized=(center/[w, h]).tolist(),
                           quad_normalized=(quad/[w, h]).tolist()))
-    return dict(protocol_version=1, manual_alignment=True, capture_id=capture['request_id'],
+    return dict(protocol_version=1, manual_alignment=True, body_dimensions_mm=[11,6],body_dimension_mode='placement_11x6_then_post_focus_refinement_5_percent',capture_id=capture['request_id'],
                 width=w, height=h, camera_id=capture['camera_id'], source='YUV',
                 source_signature=capture['scene_signature'], image_timestamp_ns=capture['image_timestamp_ns'],
                 homography_mm_to_native_px=matrix.tolist(), anchors=anchors,

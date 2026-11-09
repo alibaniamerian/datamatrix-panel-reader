@@ -11,6 +11,41 @@ from panel import read_panel, calibrate, transform, ANCHORS
 
 
 class RegistrationTests(unittest.TestCase):
+    def test_manual_retest_clears_only_selected_value_and_persists(self):
+        from server import Application
+        with tempfile.TemporaryDirectory() as temp:
+            app=Application('test',temp);app.capture={'request_id':'test'}
+            app.results={'capture_id':'test','values':{'CORE1':'old','CORE1_1':'keep'}}
+            app.bridge.status=lambda:dict(connected=True,app=dict(results_capture_id='test',read_results={'CORE1_1':'keep'},cleared_read_results=['CORE1']))
+            self.assertEqual(app.device()['results']['values'],{'CORE1_1':'keep'})
+            restarted=Application('test',temp);restarted.capture=app.capture
+            restarted.bridge.status=lambda:dict(connected=False)
+            self.assertEqual(restarted.device()['results']['values'],{'CORE1_1':'keep'})
+            app.bridge.status=lambda:dict(connected=True,app=dict(results_capture_id='test',read_results={'CORE1':'new','CORE1_1':'keep'},cleared_read_results=[]))
+            self.assertEqual(app.device()['results']['values'],{'CORE1':'new','CORE1_1':'keep'})
+
+    def test_torch_command_requires_boolean(self):
+        from server import Application
+        with tempfile.TemporaryDirectory() as temp:
+            app=Application('test',temp);sent=[]
+            app.bridge.command=lambda op,payload:sent.append((op,payload)) or {'ok':True}
+            for enabled in (True,False):app.post('/api/torch',{'enabled':enabled})
+            self.assertEqual(sent,[('torch',{'enabled':True}),('torch',{'enabled':False})])
+            for enabled in (1,'false',None):
+                with self.assertRaises(ValueError):app.post('/api/torch',{'enabled':enabled})
+
+    def test_exposure_command_validation_and_forwarding(self):
+        from server import Application
+        with tempfile.TemporaryDirectory() as temp:
+            app=Application('test',temp);sent=[]
+            app.bridge.command=lambda op,payload: sent.append((op,payload)) or {'ok':True}
+            app.post('/api/exposure',dict(iso=50,exposure_ms=125,retry_iso50=False))
+            self.assertEqual(sent,[('exposure',dict(iso=50,exposure_ms=125,retry_iso50=False))])
+            for iso,ms in [(True,10),(50.5,10),(0,10),(50,0),(50,float('nan')),(50,float('inf'))]:
+                with self.subTest(iso=iso,ms=ms),self.assertRaises(ValueError):
+                    app.post('/api/exposure',dict(iso=iso,exposure_ms=ms))
+            self.assertEqual(len(sent),1)
+
     def setUp(self):
         self.panel = read_panel()
         self.capture = dict(width=1920, height=1440, request_id='test', camera_id='0', scene_signature=[0]*768, image_timestamp_ns=123)
@@ -30,6 +65,13 @@ class RegistrationTests(unittest.TestCase):
         np.testing.assert_allclose(observed, expected, atol=.001)
         self.assertEqual(len(registration['parts']), 20)
         self.assertEqual(np.shape(registration['parts'][0]['quad_normalized']), (4, 2))
+        inverse=np.linalg.inv(np.asarray(registration['homography_mm_to_native_px']))
+        for part in registration['parts']:
+            body=transform(inverse,np.asarray(part['body_quad_normalized'])*[1920,1440])
+            np.testing.assert_allclose(np.linalg.norm(np.roll(body,-1,axis=0)-body,axis=1),[11,6,11,6],atol=1e-5)
+            np.testing.assert_allclose(body.mean(0),next([p['x_mm'],p['y_mm']] for p in self.panel['parts'] if p['designator']==part['designator']),atol=1e-5)
+            self.assertEqual(part['body_quad_normalized'],part['body_nominal_quad_normalized'])
+            self.assertFalse(part['body_fit']['detected'])
 
     def test_degenerate_and_bad_points_rejected(self):
         for mode in ('duplicate', 'outside', 'nonfinite', 'collinear', 'crossed'):

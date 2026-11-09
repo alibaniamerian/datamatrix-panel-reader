@@ -36,6 +36,28 @@ the alignment to the phone. Successfully decoded strings appear beneath the
 components on both phone and web. Results are scoped to the reference photo.
 The server binds only to loopback and does not use a cloud service.
 
+The four reference markers are movable rectangles with an 11:6 aspect ratio.
+Click the image to place them, drag to adjust their centers, and use Length and
+Angle to fit the visible cores. Click a placed rectangle or its numbered list
+entry to edit it. Only rectangle centers define the four-point registration;
+marker size and angle are visual alignment aids. Moving a center requires
+recalculating and reviewing the component positions before sending to the phone.
+
+Use the Camera exposure card to apply ISO and shutter time (milliseconds) to the
+phone. It shows the measured exposure and hardware limits. Settings persist on
+the phone. Disable the ISO 50 retry checkbox to test only your selected ISO;
+otherwise unread components get three extra ISO 50 attempts. Shutter time stays
+unchanged during retries. The default 112.5 ms is 0.1125 s (about 1/8.89 s);
+1/8 s is 125 ms.
+
+The Phone light card turns the camera LED on continuously or off while reading.
+ISO retries and autofocus retain the selected light state. The light starts off
+when the app restarts.
+
+Tapping a component on the phone clears only its previous decoded value and
+starts a fresh reading with the current camera settings. The cleared value is
+also removed from the web view and saved results; other components are retained.
+
 `adb` is found on PATH, or via `ADB_PATH`. The optional serial can also come from
 `ANDROID_SERIAL`; with one connected device it may be omitted. Existing local
 `tools/android/platform-tools/adb.exe` remains a fallback.

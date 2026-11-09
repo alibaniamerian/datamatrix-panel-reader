@@ -20,7 +20,11 @@ public final class UnreadCycleTest {
         UnreadCycle retry=new UnreadCycle(2);check(retry.next(0)==0);
         check(!retry.failed(1)&&retry.failedAttempts==0);
         check(!retry.failed(0));check(!retry.failed(0));check(retry.failed(0));
+        check(retry.iso==100&&retry.lowerIso()&&retry.iso==50&&retry.failedAttempts==0);
+        check(!retry.failed(0));check(!retry.failed(0));check(retry.failed(0));
+        check(!retry.lowerIso());
         check(retry.next(100)==1&&retry.failedAttempts==0);
+        check(retry.iso==100);
         check(retry.success(1));check(!retry.failed(1));check(retry.next(200)==0);
         System.out.println("Unread cycle deadlines, success skip, retry and completion passed");
     }

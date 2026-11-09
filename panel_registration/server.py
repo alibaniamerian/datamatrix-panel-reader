@@ -37,8 +37,13 @@ class Bridge:
 
     def status(self):
         try:
-            return dict(connected=True, serial=self.serial,
-                        app=json.loads(self.read('registration_status.json')))
+            app=json.loads(self.read('registration_status.json'))
+            try:
+                actual=json.loads(self.read('exposure_status.json'))
+                app.setdefault('exposure',{}).update(actual_iso=actual['actual_iso'],actual_exposure_ms=actual['exposure_ns']/1_000_000)
+            except Exception:
+                pass
+            return dict(connected=True, serial=self.serial, app=app)
         except Exception as e:
             return dict(connected=False, serial=self.serial, error=str(e))
 
@@ -85,7 +90,9 @@ class Application:
             if capture_id and phone.get('results_capture_id')==capture_id:
                 allowed={p['designator'] for p in self.panel['parts']}
                 values={k:v for k,v in phone.get('read_results',{}).items() if k in allowed and isinstance(v,str) and v}
-                merged=dict(saved['values'],**values)
+                cleared={k for k in phone.get('cleared_read_results',[]) if isinstance(k,str) and k in allowed}
+                merged={k:v for k,v in saved['values'].items() if k not in cleared}
+                merged.update(values)
                 if merged!=saved['values']:
                     saved=dict(capture_id=capture_id,values=merged)
                     (self.bridge.data/'read_results.json').write_text(json.dumps(saved,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -120,6 +127,15 @@ class Application:
 
     def post(self, route, body):
         with self.lock:
+            if route == '/api/torch':
+                if type(body.get('enabled')) is not bool:
+                    raise ValueError('Torch enabled must be true or false')
+                return self.bridge.command('torch',dict(enabled=body['enabled']))
+            if route == '/api/exposure':
+                iso=body.get('iso');ms=body.get('exposure_ms');retry=body.get('retry_iso50',True)
+                if type(iso) is not int or not 1<=iso<=100000 or type(ms) not in (int,float) or not 0<ms<=10000 or type(retry) is not bool:
+                    raise ValueError('Enter a valid integer ISO and positive shutter time in milliseconds')
+                return self.bridge.command('exposure',dict(iso=iso,exposure_ms=ms,retry_iso50=retry))
             if route == '/api/capture':
                 reply = self.bridge.command('capture')
                 capture = json.loads(self.bridge.read('registration_frame.json'))
@@ -138,9 +154,8 @@ class Application:
                 result = calibrate(self.panel, self.capture, body.get('anchors', []),
                                    body.get('roi_width_mm', 15), body.get('roi_height_mm', 9))
                 result['calibration_id'] = uuid.uuid4().hex
-                from body_outline import refine
-                if (self.bridge.data/'capture.png').exists():
-                    result = refine(result, self.bridge.data/'capture.png')
+                # Overview frames only project placement dimensions; no edge fitting.
+                result['body_outline_only'] = True
                 if self.settings.get('reading_enabled'):
                     result['body_outline_only'] = False
                 selected = self.settings.get('selected_component')

@@ -31,8 +31,10 @@ public final class MainActivity extends Activity {
     String cameraId; Size previewSize,rawSize; Rect active,crop; boolean fixedFocus;
     volatile boolean closing=true; boolean opening=false,busy=false,waitingFocus=false,rawRequested=false;
     int generation=0; long focusStartFrame=Long.MAX_VALUE; MeteringRectangle focusRegion; PreviewMapping mapping;
-    final int fixedIso=100;
-    final long fixedExposureNs=112500000L; long lastExposureReport=0;
+    volatile int fixedIso=100;
+    volatile boolean torchEnabled=false;
+    volatile int baseIso=100;volatile boolean retryIso50=true;
+    volatile long fixedExposureNs=112500000L; long lastExposureReport=0;
     final Map<Long,Image> pendingImages=new HashMap<>();
     final Map<Long,TotalCaptureResult> pendingResults=new HashMap<>();
     Bitmap capturePreview; float lastTapX=-1,lastTapY=-1; int captureViewWidth,captureViewHeight;
@@ -69,6 +71,8 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        android.content.SharedPreferences exposurePrefs=getSharedPreferences("exposure",0);
+        baseIso=fixedIso=exposurePrefs.getInt("iso",100);fixedExposureNs=exposurePrefs.getLong("exposure_ns",112500000L);retryIso50=exposurePrefs.getBoolean("retry_iso50",true);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(Color.BLACK);
         root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets a=insets.getInsets(WindowInsets.Type.systemBars());v.setPadding(a.left,a.top,a.right,a.bottom);return insets;});
@@ -168,7 +172,7 @@ public final class MainActivity extends Activity {
             b.set(CaptureRequest.SENSOR_EXPOSURE_TIME,fixedExposureNs);
             b.set(CaptureRequest.SENSOR_FRAME_DURATION,Math.max(33333333L,fixedExposureNs));
         }
-        b.set(CaptureRequest.FLASH_MODE,CaptureRequest.FLASH_MODE_OFF);
+        b.set(CaptureRequest.FLASH_MODE,torchEnabled?CaptureRequest.FLASH_MODE_TORCH:CaptureRequest.FLASH_MODE_OFF);
         b.set(CaptureRequest.CONTROL_AF_MODE,fixedFocus?CaptureRequest.CONTROL_AF_MODE_OFF:afMode);
         b.set(CaptureRequest.SCALER_CROP_REGION,active);b.set(CaptureRequest.CONTROL_ZOOM_RATIO,1f);
         // Keep preview buffers and AF coordinates in the same native sensor space.

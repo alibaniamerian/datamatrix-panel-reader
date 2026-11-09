@@ -27,6 +27,7 @@ final class PanelRegistration {
     String lastRequest="";
     UnreadCycle readLoop;JSONArray loopParts;int loopTicket;boolean advancingLoop;
     final java.util.Map<String,String> decodedLabels=new java.util.concurrent.ConcurrentHashMap<>();
+    final java.util.Set<String> clearedLabels=java.util.concurrent.ConcurrentHashMap.newKeySet();
     String resultsCaptureId="";
     int bodyFailures;
     void stopAutoLoop(){loopTicket++;readLoop=null;loopParts=null;}
@@ -40,9 +41,13 @@ final class PanelRegistration {
     void advanceAutoLoop(){
         if(readLoop==null||configuration==null||owner.closing)return;
         int next=readLoop.next(SystemClock.elapsedRealtime());int ticket=++loopTicket;
+        visitAutoComponent(next);
+    }
+    void visitAutoComponent(int next){
         bodyFailures=0;
         if(next<0){owner.liveEpoch++;owner.liveEnabled=false;owner.setDisplayZoom(1f);owner.boundaryStatus.setText("All components read");reply(lastRequest,true,"all_read",null);return;}
         try{
+            owner.fixedIso=readLoop.iso==50?50:owner.baseIso;
             JSONObject part=loopParts.getJSONObject(next);JSONArray c=part.getJSONArray("center_normalized");
             advancingLoop=true;owner.setDisplayZoom(1f);
             double[] v=owner.mapping.toView(c.getDouble(0)*owner.previewSize.getWidth(),c.getDouble(1)*owner.previewSize.getHeight());
@@ -56,6 +61,7 @@ final class PanelRegistration {
     }
     void onDecoded(String name,String text){
         if(configuration==null||name.isEmpty()||text.isEmpty())return;
+        clearedLabels.remove(name);
         boolean changed=!text.equals(decodedLabels.put(name,text));owner.panelMark.invalidate();
         if(readLoop==null){if(changed)reply(lastRequest,true,"read_success",null);return;}
         if(readLoop==null||loopParts==null||readLoop.current<0)return;
@@ -68,9 +74,16 @@ final class PanelRegistration {
         if(!name.equals(loopParts.optJSONObject(readLoop.current).optString("designator")))return;
         boolean skip;
         if(codeSearched){bodyFailures=0;skip=readLoop.failed(readLoop.current);android.util.Log.i("PanelReadLoop","code boundary revision failed "+name+" revision="+readLoop.failedAttempts+" reason="+(gridBuilt?"decode_failed":"grid_not_built"));}
-        else{skip=++bodyFailures>=3;android.util.Log.i("PanelReadLoop","body refinement failed "+name+" count="+bodyFailures);}
+        else{bodyFailures++;skip=readLoop.failed(readLoop.current);android.util.Log.i("PanelReadLoop","body refinement failed "+name+" count="+bodyFailures);}
         owner.boundaryMark.clear();owner.boundaryStatus.setText("Refining code boundary again: "+name);
-        if(skip)advanceAutoLoop();
+        if(skip){
+            if(owner.retryIso50&&owner.baseIso!=50&&readLoop.lowerIso()){
+                    android.util.Range<Integer> range=owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
+                    if(range==null||!range.contains(50)){advanceAutoLoop();return;}
+                    android.util.Log.i("PanelReadLoop","retry "+name+" ISO 50, three fresh attempts");
+                    visitAutoComponent(readLoop.current);
+            }else advanceAutoLoop();
+        }
     }
 
     PanelRegistration(MainActivity owner){this.owner=owner;reply("",true,"ready",null);}
@@ -87,6 +100,8 @@ final class PanelRegistration {
         value.put("motion_metric","median_local_normalized_correlation").put("motion_score",lastMotionScore);
         value.put("auto_loop",readLoop!=null).put("unread_count",readLoop==null?JSONObject.NULL:readLoop.remaining());
         value.put("results_capture_id",resultsCaptureId).put("read_results",new JSONObject(decodedLabels));
+        value.put("cleared_read_results",new JSONArray(new java.util.ArrayList<>(clearedLabels)));
+        value.put("exposure",exposureInfo());
         if(configuration!=null){JSONArray active=configuration.optJSONArray("parts");if(active!=null&&active.length()>0)value.put("selected_component",active.getJSONObject(0).optString("designator"));value.put("manual_selection",configuration.optBoolean("manual_selection",true)).put("reading_enabled",owner.liveEnabled);}
         if(error!=null)value.put("error",error);
         atomicJson("registration_status.json",value);
@@ -98,7 +113,22 @@ final class PanelRegistration {
             return new JSONObject(new String(out.toByteArray(),StandardCharsets.UTF_8));
         }
     }
-    void reset(boolean hold){configuration=null;holding=hold;owner.liveEpoch++;owner.cancelCycleFocus();owner.ui.post(()->{stopAutoLoop();decodedLabels.clear();owner.boundaryMark.clearAll();owner.panelMark.invalidate();});}
+    JSONObject exposureInfo()throws Exception{
+        // Torch is a session control and starts off whenever the app restarts.
+        JSONObject info=new JSONObject().put("iso",owner.baseIso).put("active_iso",owner.fixedIso).put("exposure_ms",owner.fixedExposureNs/1000000.0).put("retry_iso50",owner.retryIso50);
+        info.put("torch_enabled",owner.torchEnabled);
+        if(owner.characteristics!=null){
+            info.put("torch_available",Boolean.TRUE.equals(owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE)));
+            android.util.Range<Integer> iso=owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
+            android.util.Range<Long> shutter=owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
+            Long frame=owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_MAX_FRAME_DURATION);
+            if(iso!=null)info.put("iso_min",iso.getLower()).put("iso_max",iso.getUpper());
+            if(shutter!=null)info.put("exposure_min_ms",shutter.getLower()/1000000.0).put("exposure_max_ms",Math.min(shutter.getUpper(),frame==null?Long.MAX_VALUE:frame)/1000000.0);
+        }
+        try{JSONObject actual=read(file("exposure_status.json"));info.put("actual_iso",actual.optInt("actual_iso")).put("actual_exposure_ms",actual.optLong("exposure_ns")/1000000.0);}catch(Exception ignored){}
+        return info;
+    }
+    void reset(boolean hold){configuration=null;holding=hold;owner.liveEpoch++;owner.cancelCycleFocus();owner.ui.post(()->{stopAutoLoop();decodedLabels.clear();clearedLabels.clear();owner.boundaryMark.clearAll();owner.panelMark.invalidate();});}
     void poll(Image image,int[] signature){
         Image.Plane motionPlane=image.getPlanes()[0];
         latestMotion=PanelMotion.signature(motionPlane.getBuffer(),image.getWidth(),image.getHeight(),motionPlane.getRowStride(),motionPlane.getPixelStride());
@@ -116,6 +146,38 @@ final class PanelRegistration {
             if(!id.matches("[a-f0-9]{32}"))throw new IOException("Invalid request id");
             if(!command.delete())throw new IOException("Cannot consume command");lastRequest=id;
             String operation=request.getString("operation");
+            if(operation.equals("torch")){
+                final boolean enabled=request.getJSONObject("payload").getBoolean("enabled");final String torchId=id;
+                if(enabled&&!Boolean.TRUE.equals(owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE)))throw new IOException("This camera has no flash");
+                owner.ui.post(()->{
+                    owner.liveEpoch++;owner.boundaryMark.clear();owner.cancelCycleFocus();
+                    owner.cameraHandler.post(()->{
+                        boolean previous=owner.torchEnabled;
+                        try{
+                            owner.torchEnabled=enabled;owner.continuous();
+                            owner.session.setRepeatingRequest(owner.preview.build(),owner.previewCallback,owner.cameraHandler);
+                            owner.ui.post(()->{if(readLoop!=null&&readLoop.current>=0){readLoop.failedAttempts=0;visitAutoComponent(readLoop.current);}reply(torchId,true,"torch_applied",null);});
+                        }catch(Exception e){owner.torchEnabled=previous;reply(torchId,false,"error",e.getMessage());}
+                    });
+                });return;
+            }
+            if(operation.equals("exposure")){
+                JSONObject p=request.getJSONObject("payload");int iso=p.getInt("iso");double ms=p.getDouble("exposure_ms");long ns=Math.round(ms*1000000.0);
+                android.util.Range<Integer> ir=owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
+                android.util.Range<Long> er=owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
+                Long frame=owner.characteristics.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_MAX_FRAME_DURATION);
+                if(!Double.isFinite(ms)||ir==null||!ir.contains(iso)||er==null||!er.contains(ns)||frame!=null&&ns>frame)throw new IOException("ISO or shutter is outside the camera range");
+                final String exposureId=id;final boolean retry=p.optBoolean("retry_iso50",true);
+                owner.ui.post(()->{
+                    owner.liveEpoch++;owner.boundaryMark.clear();owner.cancelCycleFocus();
+                    owner.cameraHandler.post(()->{try{
+                        owner.baseIso=owner.fixedIso=iso;owner.fixedExposureNs=ns;owner.retryIso50=retry;
+                        owner.continuous();owner.session.setRepeatingRequest(owner.preview.build(),owner.previewCallback,owner.cameraHandler);
+                        owner.getSharedPreferences("exposure",0).edit().putInt("iso",iso).putLong("exposure_ns",ns).putBoolean("retry_iso50",retry).apply();
+                        owner.ui.post(()->{if(readLoop!=null&&readLoop.current>=0){readLoop.iso=100;readLoop.failedAttempts=0;visitAutoComponent(readLoop.current);}reply(exposureId,true,"exposure_applied",null);});
+                    }catch(Exception e){reply(exposureId,false,"error",e.getMessage());}});
+                });return;
+            }
             if(operation.equals("capture")){capture(id,image,signature);return;}
             if(operation.equals("inspect")){snapshot(id,image,signature,true);return;}
             if(operation.equals("analysis")){
@@ -222,10 +284,15 @@ final class PanelRegistration {
             if(!advancingLoop){
                 if(current.optBoolean("auto_cycle",false)){
                     if(readLoop==null){loopParts=all;readLoop=new UnreadCycle(all.length());for(int i=0;i<all.length();i++)readLoop.read[i]=decodedLabels.containsKey(all.getJSONObject(i).optString("designator"));}
-                    readLoop.current=index;readLoop.read[index]=false;readLoop.failedAttempts=0;bodyFailures=0;loopTicket++;
+                    readLoop.current=index;readLoop.read[index]=false;readLoop.failedAttempts=0;readLoop.iso=100;bodyFailures=0;loopTicket++;
                 }else stopAutoLoop();
+                owner.fixedIso=owner.baseIso;
             }
             JSONObject selected=all.getJSONObject(index);String name=selected.getString("designator");
+            if(!advancingLoop){
+                decodedLabels.remove(name);clearedLabels.add(name);
+                JSONObject prior=current.optJSONObject("read_results");if(prior!=null)prior.remove(name);
+            }
             JSONObject next=new JSONObject(current.toString()).put("all_parts",all).put("parts",new JSONArray().put(selected)).put("manual_selection",true).put("body_outline_only",false);
             configuration=next;owner.liveEnabled=true;
             owner.getSharedPreferences("panel_selection",0).edit().putString("component",name).apply();

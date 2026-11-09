@@ -77,7 +77,8 @@ def locate(gray, config, target_json, start, pose):
         # RAW has the same registered field of view but more pixels than YUV.
         reference_w=config.get('_reference_width',width);reference_h=config.get('_reference_height',height)
         matrix=np.diag([width/reference_w,height/reference_h,1.])@np.asarray(config['homography_mm_to_native_px'],float)
-        cache_key=(config.get('capture_id'),config.get('calibration_id'),part['designator'],str(part['body_quad_normalized']))
+        initial_body=part.get('body_nominal_quad_normalized',part['body_quad_normalized'])
+        cache_key=(config.get('capture_id'),config.get('calibration_id'),part['designator'],str(initial_body))
         now=time.monotonic()
         entry=_geometry_cache.get(cache_key)
         fresh=config.get('fresh_geometry_per_attempt',True)
@@ -87,7 +88,7 @@ def locate(gray, config, target_json, start, pose):
             result['geometry_reused']=True
             result['code_center_px']=(np.asarray(result['quad_normalized']).mean(0)*[width,height]).tolist()
         else:
-            result=core_localization.locate(gray,matrix,np.asarray(part['body_quad_normalized'])*[width,height])
+            result=core_localization.locate(gray,matrix,np.asarray(initial_body)*[width,height])
         for key in ('quad','body_quad'):
             px=result.pop(key+'_px',None)
             if px is not None:result[key+'_normalized']=(np.asarray(px)/[width,height]).tolist()
