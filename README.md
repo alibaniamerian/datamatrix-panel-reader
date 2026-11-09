@@ -1,5 +1,9 @@
 # DataMatrix Panel Reader
 
+For the separate single-code production-line app with a fixed scanning square,
+see [PCB Line Reader](https://github.com/alibaniamerian/pcb-line-code-reader).
+It has its own repository and installs alongside the panel app.
+
 Android camera application and a local web tool for reading DataMatrix codes on
 registered ferrite components. Supports native RAW analysis, YUV preview analysis,
 manual component selection and automatic review of unread components.
